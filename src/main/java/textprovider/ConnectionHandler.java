@@ -10,15 +10,17 @@ public class ConnectionHandler implements Runnable {
     private LinkedList<Socket> connectionQueue;
     private ArrayList<LinkedList<Job>> workerQueues;
 
-    private  String inFilePath;
+    private  int inFileLineCount;
+    private String inputFilePath;
 
     final static String PROTO_GET = "GET";
     private final String PROTO_QUIT = "QUIT";
     private final String PROTO_SHUTDOWN = "SHUTDOWN";
 
-    ConnectionHandler(String inFilePath, LinkedList<Socket> connectionQueue) {
-        this.inFilePath = inFilePath;
+    ConnectionHandler(int inFileLineCount, String inputFilePath, LinkedList<Socket> connectionQueue) {
+        this.inFileLineCount = inFileLineCount;
         this.connectionQueue = connectionQueue;
+        this.inputFilePath = inputFilePath;
     }
 
     public void run() {
@@ -29,11 +31,11 @@ public class ConnectionHandler implements Runnable {
     private void initialize() {
         // instantiate and run worker threads
         final int WORKER_THREAD_COUNT = 4;
-        workerQueues = new ArrayList<LinkedList<Job>>(WORKER_THREAD_COUNT);
+        workerQueues = new ArrayList<>(WORKER_THREAD_COUNT);
         for (int i = 0; i < WORKER_THREAD_COUNT; i++) {
-            LinkedList<Job> workerQueue = new LinkedList<Job>();
+            LinkedList<Job> workerQueue = new LinkedList<>();
             workerQueues.add(workerQueue);
-            JobWorker jw = new JobWorker(inFilePath, workerQueue);
+            JobWorker jw = new JobWorker(inFileLineCount, inputFilePath, workerQueue);
             jw.run();
         }
     }

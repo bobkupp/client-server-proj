@@ -9,35 +9,17 @@ public class JobWorker implements Runnable {
 
     private Boolean useInMemoryLookup;
     private ArrayList<String> fileContents;
+    private int inFileLineCount;
     private String inputFilePath;
+    private final String okayResponse = "OK/r/n";
+    private final String errorResponse = "ERR/r/n";
 
     private LinkedList<Job> jobQueue;
 
-    JobWorker(String inputFilePath, LinkedList<Job>jobQueue) {
+    JobWorker(int inFileLineCount, String inputFilePath, LinkedList<Job>jobQueue) {
         this.jobQueue = jobQueue;
+        this.inFileLineCount = inFileLineCount;
         this.inputFilePath = inputFilePath;
-        useInMemoryLookup = prepareInputFile();
-    }
-
-    private Boolean prepareInputFile() {
-        int LARGE_FILE_MIN_SIZE = 256 * 1024;
-        if (new File(inputFilePath).length() > LARGE_FILE_MIN_SIZE) {
-            return false;
-        }
-        fileContents = new ArrayList<String>();
-        try {
-            BufferedReader in = new BufferedReader(new FileReader(inputFilePath));
-
-            String line;
-            fileContents.add("dummy line - because array is 0-based and requests are 1-based");
-            while ((line = in.readLine()) != null) {
-                fileContents.add(line);
-            }
-        } catch (IOException ioe) {
-            System.out.println("Exception received while reading input file: " + inputFilePath + ", error: " + ioe.getMessage());
-            System.exit(-1);
-        }
-        return true;
     }
 
     public void run() {
@@ -47,31 +29,38 @@ public class JobWorker implements Runnable {
             try {
                 Job job = jobQueue.removeFirst();
                 String[] lineNumberStringArray = job.getCommand().split(ConnectionHandler.PROTO_GET + " ");
+                int requestedLineNumber = Integer.parseInt(lineNumberStringArray[0]);
                 if (lineNumberStringArray.length != 1) {
                     System.out.println("Invalid content in GET request: " + job.getCommand());
                     continue;
                 }
                 try {
-                    int lineNum = Integer.parseInt(lineNumberStringArray[0]);
-                    if (useInMemoryLookup) {
-                        line = fileContents.get(lineNum);
-                    } else {
-                        Runtime run = Runtime.getRuntime();
+                    // send response
+                    String responseText;
+                    if (requestedLineNumber <= inFileLineCount) {
+                        try {
+                            Runtime run = Runtime.getRuntime();
 
-                        // example command: cat sample_data_1.txt | sed -n '25p'
-                        String sedCommand = "cat " + inputFilePath + " | sed -n \'" + lineNumberStringArray[0] + "p\'";
-                        Process pr = run.exec(sedCommand);
-                        pr.waitFor();
-                        BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
-                        line = buf.readLine();
+                            // example command: cat sample_data_1.txt | sed -n '25p'
+                            String sedCommand = "cat " + inputFilePath + " | sed -n \'" + lineNumberStringArray[0] + "p\'";
+                            Process pr = run.exec(sedCommand);
+                            pr.waitFor();
+                            BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
+                            line = buf.readLine();
+                            job.getWriter().write(okayResponse + line);
+                        } catch (InterruptedException ie) {
+                            System.out.println("Exception received trying to get line from input file, err: " + ie.getMessage());
+                            job.getWriter().write(okayResponse);
+                        }
+                    } else {
+                        job.getWriter().write(errorResponse);
                     }
-                    job.getWriter().write(line);
                 } catch (NumberFormatException nfe) {
                     System.out.println("Invalid content (not integer) in GET request: " + job.getCommand());
                 } catch (IOException ioe) {
                     System.out.println("Exception caught while trying to get line number from *large* file, err: " + ioe.getMessage());
-                } catch (InterruptedException ie) {
-                    System.out.println("Interrupted while trying to get line number from *large* file, err: " + ie.getMessage());
+//                } catch (InterruptedException ie) {
+//                    System.out.println("Interrupted while trying to get line number from *large* file, err: " + ie.getMessage());
                 }
             } catch (NoSuchElementException nsee) {
                 try {
