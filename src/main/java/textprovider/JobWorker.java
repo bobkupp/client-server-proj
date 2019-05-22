@@ -7,21 +7,21 @@ import java.util.NoSuchElementException;
 
 public class JobWorker implements Runnable {
 
-    private final int LARGE_FILE_MIN_SIZE = 256 * 1024;
-    Boolean useInMemoryLookup = false;
-    ArrayList<String> fileContents;
+    private Boolean useInMemoryLookup;
+    private ArrayList<String> fileContents;
     private String inputFilePath;
 
-    LinkedList<Job> jobQueue;
+    private LinkedList<Job> jobQueue;
 
-    public JobWorker(String inputFilePath, LinkedList<Job>jobQueue) {
+    JobWorker(String inputFilePath, LinkedList<Job>jobQueue) {
         this.jobQueue = jobQueue;
         this.inputFilePath = inputFilePath;
         useInMemoryLookup = prepareInputFile();
     }
 
     private Boolean prepareInputFile() {
-        if (new File(inputFilePath).length() >LARGE_FILE_MIN_SIZE) {
+        int LARGE_FILE_MIN_SIZE = 256 * 1024;
+        if (new File(inputFilePath).length() > LARGE_FILE_MIN_SIZE) {
             return false;
         }
         fileContents = new ArrayList<String>();
@@ -46,9 +46,9 @@ public class JobWorker implements Runnable {
             String line;
             try {
                 Job job = jobQueue.removeFirst();
-                String[] lineNumberStringArray = job.command.split(TextProvider.PROTO_GET + " ");
+                String[] lineNumberStringArray = job.getCommand().split(ConnectionHandler.PROTO_GET + " ");
                 if (lineNumberStringArray.length != 1) {
-                    System.out.println("Invalid content in GET request: " + job.command);
+                    System.out.println("Invalid content in GET request: " + job.getCommand());
                     continue;
                 }
                 try {
@@ -65,9 +65,9 @@ public class JobWorker implements Runnable {
                         BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
                         line = buf.readLine();
                     }
-                    job.writer.write(line);
+                    job.getWriter().write(line);
                 } catch (NumberFormatException nfe) {
-                    System.out.println("Invalid content (not integer) in GET request: " + job.command);
+                    System.out.println("Invalid content (not integer) in GET request: " + job.getCommand());
                 } catch (IOException ioe) {
                     System.out.println("Exception caught while trying to get line number from *large* file, err: " + ioe.getMessage());
                 } catch (InterruptedException ie) {

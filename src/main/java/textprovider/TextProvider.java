@@ -4,79 +4,59 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.LinkedList;
-import java.util.ArrayList;
 
 public class TextProvider {
-    TextProvider tp;
-    public static String PROTO_GET = "GET";
-    public static String PROTO_QUIT = "QUIT";
-    public static String PROTO_SHUTDOWN = "SHUTDOWN";
-    private final int LISTENER_PORT = 10322;
-    private final int WORKER_THREAD_COUNT = 4;
     private ServerSocket serverEndpoint;
-    public ArrayList<LinkedList<Job>> workerQueues = new ArrayList(WORKER_THREAD_COUNT);
-    private int nextWorkerQueue = 0;
+    private LinkedList<Socket> connectionQueue = new LinkedList<Socket>();
     private static String inFilePath;
+    private ConnectionHandler connectionHandler;
 
-    public static void main(final String[] args) throws Exception {
-        if (args.length != 2) {
-            System.out.println("Invalid number of arguments, expected: " + args[0] + " {input_file_path}\n");
+    public static void main(final String[] args) {
+        if (args.length != 1) {
+            System.out.println("Invalid number of arguments, expected: {input_file_path}\n");
             System.exit(-1);
         }
-        TextProvider.inFilePath = args[1];
+        inFilePath = args[0];
+        if (!(new File(inFilePath)).isFile()) {
+            System.out.println("Input file is not a valid text file: " + inFilePath);
+            System.exit(-1);
+        }
         TextProvider tp = new TextProvider();
-        if (tp.initialize()) {
-            tp.processCommands();
+        if (tp.startConnectionHandler()) {
+            tp.processConnections();
         }
     }
 
-    private Boolean initialize() {
-        Boolean startupComplete = false;
+    private Boolean startConnectionHandler() {
+        final int LISTENER_PORT = 10322;
+        boolean startupComplete = false;
 
-        for (int i = 0; i < WORKER_THREAD_COUNT; i++) {
-            LinkedList<Job> workerQueue = new LinkedList<Job>();
-            workerQueues.add(workerQueue);
-            JobWorker jw = new JobWorker(inFilePath, workerQueue);
-            jw.run();
-        }
         try {
             serverEndpoint = new ServerSocket(LISTENER_PORT);
             startupComplete = true;
         } catch (IOException ioe) {
             System.out.println("Exception caught trying to open server socket, err: " + ioe.getMessage());
         }
+        connectionHandler = new ConnectionHandler(inFilePath, connectionQueue);
+        connectionHandler.run();
+
         return startupComplete;
     }
 
-    private void processCommands() {
-        String command = new String("");
+    private void processConnections() {
 
-
-        while (!command.equals(PROTO_SHUTDOWN)) {
+        Thread connectionThread = new Thread(connectionHandler);
+        while (connectionThread.isAlive()) {
             try {
-                Socket clientConnection = serverEndpoint.accept();
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientConnection.getInputStream()));
-                if (reader.ready()) {
-                    command = reader.readLine();
-                    if (command.startsWith(PROTO_GET + " ")) {
-                        // make request for worker, queuing job with writer/command
-                        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(clientConnection.getOutputStream()));
-                        Job job = new Job(writer, command);
-                        workerQueues.get(nextWorkerQueue % 4).add(job);
-                    } else if (command.equals(PROTO_QUIT)) {
-                        clientConnection.close();
-                    } else if (command.equals(PROTO_SHUTDOWN)) {
-                        clientConnection.close();
-                        serverEndpoint.close();
-                    }
-                } else {
-                    // connection received, but client hasn't sent request yet
-                    // may want to hand this off to a thread, so main server task can continue accepting/delegating requests
-                    System.out.println("Connection accepted, but no data ready to be read - what to do ?????????");
-                }
+                connectionQueue.add(serverEndpoint.accept());
             } catch (IOException ioe) {
                 System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
             }
+        }
+        try {
+            serverEndpoint.close();
+        } catch (IOException ioe) {
+            System.out.println("Exception caught while closing ServerSocket, err: " + ioe.getMessage());
         }
     }
 
