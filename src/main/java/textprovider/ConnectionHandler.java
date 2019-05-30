@@ -1,23 +1,26 @@
 package textprovider;
 
-import java.io.*;
 import java.net.Socket;
 import java.util.LinkedList;
-import java.util.ArrayList;
+import java.util.concurrent.*;
+import java.util.NoSuchElementException;
 
 public class ConnectionHandler implements Runnable {
 
     private LinkedList<Socket> connectionQueue;
-    private ArrayList<LinkedList<Job>> workerQueues;
+    private LinkedList<Future> workerFutures;
 
     private  int inFileLineCount;
     private String inputFilePath;
+    private String threadName;
+    private LinkedList<Job> jobQueue;
 
-    final static String PROTO_GET = "GET";
-    private final String PROTO_QUIT = "QUIT";
-    private final String PROTO_SHUTDOWN = "SHUTDOWN";
+    static final int CONNECTION_WAIT_MILLISECONDS = 10;
+    private final int JOB_WORKER_COUNT = 4;
+    private ExecutorService executorService;
 
-    ConnectionHandler(int inFileLineCount, String inputFilePath, LinkedList<Socket> connectionQueue) {
+    ConnectionHandler(String threadName, int inFileLineCount, String inputFilePath, LinkedList<Socket> connectionQueue) {
+        this.threadName = threadName;
         this.inFileLineCount = inFileLineCount;
         this.connectionQueue = connectionQueue;
         this.inputFilePath = inputFilePath;
@@ -25,51 +28,49 @@ public class ConnectionHandler implements Runnable {
 
     public void run() {
         initialize();
-        processCommands();
+        processConnections();
     }
 
     private void initialize() {
-        // instantiate and run worker threads
-        final int WORKER_THREAD_COUNT = 4;
-        workerQueues = new ArrayList<>(WORKER_THREAD_COUNT);
-        for (int i = 0; i < WORKER_THREAD_COUNT; i++) {
-            LinkedList<Job> workerQueue = new LinkedList<>();
-            workerQueues.add(workerQueue);
-            JobWorker jw = new JobWorker(inFileLineCount, inputFilePath, workerQueue);
-            jw.run();
+        System.out.println("... ConnectionHandler::initialize, thread: " + threadName);
+        jobQueue = new LinkedList<>();
+        workerFutures = new LinkedList<>();
+        executorService = Executors.newFixedThreadPool(JOB_WORKER_COUNT);
+        for (int i = 0; i < JOB_WORKER_COUNT; i++) {
+            System.out.println("... ConnectionHandler::instantiating job worker, thread: " + i);
+            JobWorker jw = new JobWorker(inFileLineCount, inputFilePath, jobQueue);
+            workerFutures.add(executorService.submit(jw));
         }
     }
 
-    private void processCommands() {
-        int nextWorkerQueue = 0;
-
-        String command = "";
-
-        while (!command.equals(PROTO_SHUTDOWN)) {
-            Socket clientConnection = connectionQueue.removeFirst();
-            try {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientConnection.getInputStream()));
-                if (reader.ready()) {
-                    command = reader.readLine();
-                    if (command.startsWith(PROTO_GET + " ")) {
-                        // make request for worker, queuing job with writer/command
-                        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(clientConnection.getOutputStream()));
-                        Job job = new Job(writer, command);
-                        workerQueues.get(nextWorkerQueue++ % 4).add(job);
-                    } else if (command.equals(PROTO_QUIT)) {
-                        clientConnection.close();
-                    } else if (command.equals(PROTO_SHUTDOWN)) {
-                        clientConnection.close();
-                    }
-                } else {
-                    // connection received, but client hasn't sent request yet
-                    // may want to hand this off to a thread, so connection handler task can continue accepting/delegating requests
-                    System.out.println("Connection accepted, but no data ready to be read - what to do ?????????");
+    private void processConnections() {
+        boolean inShutdown = false;
+        while (!inShutdown) {
+            if (connectionQueue.peekFirst() != null) {
+                try {
+                    Socket clientConnection = connectionQueue.removeFirst();
+                    System.out.println("... ConnectionHandler: GOT CONNECTION");
+                        Job job = new Job(clientConnection);
+                        jobQueue.add(job);
+                } catch (NoSuchElementException nsee) {
+                    System.out.println("Exception received trying to get element from connection queue, err: " + nsee.getMessage());
                 }
-            } catch (IOException ioe) {
-                System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
+            } else {
+                try {
+                    for (Future future : workerFutures) {
+                        if (future.isDone()) {
+                            inShutdown = true;
+                        }
+                    }
+                    Thread.sleep(CONNECTION_WAIT_MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    System.out.println("Received exception while waiting for new connections, err: " + ie.getMessage());
+                }
             }
         }
     }
 
+    protected void finalize() {
+        System.out.println("ConnectionHandler has terminated");
+    }
 }

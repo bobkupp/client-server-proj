@@ -1,75 +1,127 @@
 package textprovider;
 
 import java.io.*;
-import java.util.ArrayList;
+import java.net.Socket;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
 import java.util.LinkedList;
 import java.util.NoSuchElementException;
 
-public class JobWorker implements Runnable {
+public class JobWorker implements Callable {
 
-    private Boolean useInMemoryLookup;
-    private ArrayList<String> fileContents;
     private int inFileLineCount;
     private String inputFilePath;
-    private final String okayResponse = "OK/r/n";
-    private final String errorResponse = "ERR/r/n";
+    private final String okayResponse = "OK\r\n";
+    private final String errorResponse = "ERR\r\n";
+    private final static String PROTO_GET = "GET";
+    private final static String PROTO_QUIT = "QUIT";
+    private final static String PROTO_SHUTDOWN = "SHUTDOWN";
+
+    private Runtime run;
 
     private LinkedList<Job> jobQueue;
 
-    JobWorker(int inFileLineCount, String inputFilePath, LinkedList<Job>jobQueue) {
-        this.jobQueue = jobQueue;
+    JobWorker(int inFileLineCount, String inputFilePath, LinkedList<Job> jobQueue) {
         this.inFileLineCount = inFileLineCount;
         this.inputFilePath = inputFilePath;
+        this.jobQueue = jobQueue;
+        run = Runtime.getRuntime();
     }
 
-    public void run() {
+    public String call() {
+        String returnValue = "done";
         System.out.println("JobWorker thread started ...");
-        while(true) {
+        boolean inShutdown = false;
+        while(!inShutdown) {
             String line;
-            try {
-                Job job = jobQueue.removeFirst();
-                String[] lineNumberStringArray = job.getCommand().split(ConnectionHandler.PROTO_GET + " ");
-                int requestedLineNumber = Integer.parseInt(lineNumberStringArray[0]);
-                if (lineNumberStringArray.length != 1) {
-                    System.out.println("Invalid content in GET request: " + job.getCommand());
-                    continue;
-                }
+            if (jobQueue.peekFirst() != null) {
                 try {
-                    // send response
-                    String responseText;
-                    if (requestedLineNumber <= inFileLineCount) {
-                        try {
-                            Runtime run = Runtime.getRuntime();
+                    System.out.println("JobWorker found job, getting it ...");
+                    Job job = jobQueue.removeFirst();
+                    Socket client = job.getClientConnection();
+                    job.setReader(new BufferedReader(new InputStreamReader(client.getInputStream())));
+                    job.setWriter(new BufferedWriter(new OutputStreamWriter(client.getOutputStream())));
+                    boolean jobComplete = false;
 
-                            // example command: cat sample_data_1.txt | sed -n '25p'
-                            String sedCommand = "cat " + inputFilePath + " | sed -n \'" + lineNumberStringArray[0] + "p\'";
-                            Process pr = run.exec(sedCommand);
-                            pr.waitFor();
-                            BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
-                            line = buf.readLine();
-                            job.getWriter().write(okayResponse + line);
-                        } catch (InterruptedException ie) {
-                            System.out.println("Exception received trying to get line from input file, err: " + ie.getMessage());
-                            job.getWriter().write(okayResponse);
+                    while (!jobComplete) {
+                        System.out.println("... JobWorker: trying read");
+                        line = job.getReader().readLine();
+                        System.out.println("... JobWorker: read command line: " + line);
+                        String[] lineNumberStringArray = line.split(" ");
+                        String command = lineNumberStringArray[0];
+                        System.out.println("JobWorker: command is: " + command);
+
+                        switch (command) {
+                            case PROTO_QUIT:
+                                System.out.println("JobWorker: got QUIT");
+                                jobComplete = true;
+                                break;
+                            case PROTO_SHUTDOWN:
+                                System.out.println("JobWorker: got SHUTDOWN");
+                                jobComplete = true;
+                                inShutdown = true;
+                                returnValue = "shutdown";
+                                break;
+                            case PROTO_GET:
+                                int requestedLineNumber = Integer.parseInt(lineNumberStringArray[1]);
+                                if (lineNumberStringArray.length != 2) {
+                                    System.out.println("Invalid content in GET request: " + job.getCommand());
+                                    continue;
+                                }
+                                try {
+                                    // send response
+                                    if (requestedLineNumber <= inFileLineCount) {
+                                        try {
+
+                                            // get requested line from file: example command: cat sample_data_1.txt | sed -n '25p'
+                                            String[] sedCommand = {"/bin/sh", "-c", "cat " + inputFilePath + " | sed -n \'" + lineNumberStringArray[1] + "p\'"};
+                                            System.out.println("JobWorker: sedCommand: " + Arrays.toString(sedCommand));
+                                            Process pr = run.exec(sedCommand);
+                                            pr.waitFor();
+                                            BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
+                                            line = buf.readLine();
+
+                                            System.out.println("JobWriter: sending response: " + okayResponse + line);
+                                            job.getWriter().write(okayResponse + line);
+                                            job.getWriter().flush();
+                                        } catch (InterruptedException ie) {
+                                            System.out.println("Exception received trying to get line from input file, err: " + ie.getMessage());
+                                            job.getWriter().write(okayResponse);
+                                            job.getWriter().flush();
+                                        }
+                                    } else {
+                                        System.out.println("JobWriter: sending response: " + errorResponse);
+                                        job.getWriter().write(errorResponse);
+                                        job.getWriter().flush();
+                                    }
+                                } catch (NumberFormatException nfe) {
+                                    System.out.println("Invalid content (not integer) in GET request: " + job.getCommand());
+                                } catch (IOException ioe) {
+                                    System.out.println("Exception caught while trying to get line number, err: " + ioe.getMessage() + ", sed command: ");
+                                }
+                                break;
+                            default:
+                                System.out.println("Received invalid command: " + command);
                         }
-                    } else {
-                        job.getWriter().write(errorResponse);
                     }
-                } catch (NumberFormatException nfe) {
-                    System.out.println("Invalid content (not integer) in GET request: " + job.getCommand());
+                } catch (NoSuchElementException nsee) {
+                    try {
+                        Thread.sleep(ConnectionHandler.CONNECTION_WAIT_MILLISECONDS);
+                    } catch (InterruptedException ie) {
+                        System.out.println("Received exception while waiting for new requests, err: " + ie.getMessage() + ", shutting down ...");
+                        System.exit(-1);
+                    }
                 } catch (IOException ioe) {
-                    System.out.println("Exception caught while trying to get line number from *large* file, err: " + ioe.getMessage());
-//                } catch (InterruptedException ie) {
-//                    System.out.println("Interrupted while trying to get line number from *large* file, err: " + ie.getMessage());
+                    System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
                 }
-            } catch (NoSuchElementException nsee) {
+            } else {
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(ConnectionHandler.CONNECTION_WAIT_MILLISECONDS);
                 } catch (InterruptedException ie) {
                     System.out.println("Received exception while waiting for new requests, err: " + ie.getMessage() + ", shutting down ...");
-                    System.exit(-1);
                 }
             }
         }
+        return returnValue;
     }
 }

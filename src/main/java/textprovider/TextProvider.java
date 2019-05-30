@@ -10,7 +10,7 @@ public class TextProvider {
     private LinkedList<Socket> connectionQueue = new LinkedList<>();
     private static int inFileLineCount;
     private static String inputFilePath;
-    private ConnectionHandler connectionHandler;
+    private Thread connectionThread;
 
     public static void main(final String[] args) {
         if (args.length != 1) {
@@ -28,6 +28,7 @@ public class TextProvider {
         if (tp.startConnectionHandler()) {
             tp.processConnections();
         }
+        System.exit(0);
     }
 
     private int getInputFileCount(String inFilePath) {
@@ -40,13 +41,13 @@ public class TextProvider {
         Runtime run = Runtime.getRuntime();
 
         // example command: cat sample_data_1.txt | wc -l
-        String sedCommand = "cat " + inFilePath + " | wc -l";
+        String[] shellCommand = {"/bin/sh", "-c", "cat " + inFilePath + " | wc -l"};
         try {
-            Process pr = run.exec(sedCommand);
+            Process pr = run.exec(shellCommand);
             pr.waitFor();
             BufferedReader buf = new BufferedReader(new InputStreamReader(pr.getInputStream()));
             String line = buf.readLine();
-            lineCount = Integer.parseInt(line);
+            lineCount = Integer.parseInt(line.trim());
         } catch (IOException ioe) {
             System.out.println("Exception received trying to get input file line count, err: " + ioe.getMessage());
         } catch (InterruptedException ie) {
@@ -61,24 +62,29 @@ public class TextProvider {
 
         try {
             serverEndpoint = new ServerSocket(LISTENER_PORT);
+            serverEndpoint.setSoTimeout(10 * 1000);
             startupComplete = true;
         } catch (IOException ioe) {
             System.out.println("Exception caught trying to open server socket, err: " + ioe.getMessage());
         }
-        connectionHandler = new ConnectionHandler(inFileLineCount, inputFilePath, connectionQueue);
-        connectionHandler.run();
+        System.out.println("... starting connection handler");
+        ConnectionHandler connectionHandler = new ConnectionHandler("Connection Handler", inFileLineCount, inputFilePath, connectionQueue);
+        connectionThread = new Thread(connectionHandler);
+        connectionThread.start();
+
 
         return startupComplete;
     }
 
     private void processConnections() {
 
-        Thread connectionThread = new Thread(connectionHandler);
+        System.out.println("processConnections: connectionThread state: " + connectionThread.getState());
         while (connectionThread.isAlive()) {
             try {
+                System.out.println("TextProvider: doing accept, conn thread state: " + connectionThread.getState());
                 connectionQueue.add(serverEndpoint.accept());
             } catch (IOException ioe) {
-                System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
+//                System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
             }
         }
         try {
@@ -87,5 +93,4 @@ public class TextProvider {
             System.out.println("Exception caught while closing ServerSocket, err: " + ioe.getMessage());
         }
     }
-
 }
