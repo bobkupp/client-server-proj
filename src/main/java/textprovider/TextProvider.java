@@ -31,6 +31,24 @@ public class TextProvider {
         System.exit(0);
     }
 
+    private void processConnections() {
+
+        System.out.println("processConnections: connectionThread state: " + connectionThread.getState());
+        while (connectionThread.isAlive()) {
+            try {
+//                System.out.println("TextProvider: doing accept, conn thread state: " + connectionThread.getState());
+                connectionQueue.add(serverEndpoint.accept());
+            } catch (IOException ioe) {
+//                System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
+            }
+        }
+        try {
+            serverEndpoint.close();
+        } catch (IOException ioe) {
+            System.out.println("Exception caught while closing ServerSocket, err: " + ioe.getMessage());
+        }
+    }
+
     private int getInputFileCount(String inFilePath) {
         int lineCount = -1;
 
@@ -62,7 +80,7 @@ public class TextProvider {
 
         try {
             serverEndpoint = new ServerSocket(LISTENER_PORT);
-            serverEndpoint.setSoTimeout(10 * 1000);
+            serverEndpoint.setSoTimeout(1000);
             startupComplete = true;
         } catch (IOException ioe) {
             System.out.println("Exception caught trying to open server socket, err: " + ioe.getMessage());
@@ -74,23 +92,5 @@ public class TextProvider {
 
 
         return startupComplete;
-    }
-
-    private void processConnections() {
-
-        System.out.println("processConnections: connectionThread state: " + connectionThread.getState());
-        while (connectionThread.isAlive()) {
-            try {
-                System.out.println("TextProvider: doing accept, conn thread state: " + connectionThread.getState());
-                connectionQueue.add(serverEndpoint.accept());
-            } catch (IOException ioe) {
-//                System.out.println("Exception caught while accepting client connection, err: " + ioe.getMessage());
-            }
-        }
-        try {
-            serverEndpoint.close();
-        } catch (IOException ioe) {
-            System.out.println("Exception caught while closing ServerSocket, err: " + ioe.getMessage());
-        }
     }
 }

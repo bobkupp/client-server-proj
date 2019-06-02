@@ -32,7 +32,6 @@ public class ConnectionHandler implements Runnable {
     }
 
     private void initialize() {
-        System.out.println("... ConnectionHandler::initialize, thread: " + threadName);
         jobQueue = new LinkedList<>();
         workerFutures = new LinkedList<>();
         executorService = Executors.newFixedThreadPool(JOB_WORKER_COUNT);
