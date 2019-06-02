@@ -58,6 +58,7 @@ public class JobWorker implements Callable {
                             switch (command) {
                                 case PROTO_QUIT:
                                     System.out.println("JobWorker: got QUIT");
+                                    client.close();
                                     jobComplete = true;
                                     break;
                                 case PROTO_SHUTDOWN:

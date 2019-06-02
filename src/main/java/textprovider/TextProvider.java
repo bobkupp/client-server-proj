@@ -31,6 +31,26 @@ public class TextProvider {
         System.exit(0);
     }
 
+    private Boolean startConnectionHandler() {
+        final int LISTENER_PORT = 10322;
+        boolean startupComplete = false;
+
+        try {
+            serverEndpoint = new ServerSocket(LISTENER_PORT);
+            serverEndpoint.setSoTimeout(1000);
+            startupComplete = true;
+        } catch (IOException ioe) {
+            System.out.println("Exception caught trying to open server socket, err: " + ioe.getMessage());
+        }
+        System.out.println("... starting connection handler");
+        ConnectionHandler connectionHandler = new ConnectionHandler("Connection Handler", inFileLineCount, inputFilePath, connectionQueue);
+        connectionThread = new Thread(connectionHandler);
+        connectionThread.start();
+
+
+        return startupComplete;
+    }
+
     private void processConnections() {
 
         System.out.println("processConnections: connectionThread state: " + connectionThread.getState());
@@ -72,25 +92,5 @@ public class TextProvider {
             System.out.println("Interrupted while trying to get line count from input file, err: " + ie.getMessage());
         }
         return lineCount;
-    }
-
-    private Boolean startConnectionHandler() {
-        final int LISTENER_PORT = 10322;
-        boolean startupComplete = false;
-
-        try {
-            serverEndpoint = new ServerSocket(LISTENER_PORT);
-            serverEndpoint.setSoTimeout(1000);
-            startupComplete = true;
-        } catch (IOException ioe) {
-            System.out.println("Exception caught trying to open server socket, err: " + ioe.getMessage());
-        }
-        System.out.println("... starting connection handler");
-        ConnectionHandler connectionHandler = new ConnectionHandler("Connection Handler", inFileLineCount, inputFilePath, connectionQueue);
-        connectionThread = new Thread(connectionHandler);
-        connectionThread.start();
-
-
-        return startupComplete;
     }
 }
